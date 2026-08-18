@@ -1,0 +1,85 @@
+name: Create Release
+
+on:
+  workflow_run:
+    workflows: ["Update NyarchLinux Apps"]
+    types:
+      - completed
+  push:
+    branches:
+      - main
+    paths:
+      - "artifacts/versions.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if release needed
+        id: release_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          extract_version() {
+            jq -r --arg name "$1" '.[$name].version // "unknown"' artifacts/versions.json
+          }
+          ASSISTANT_VERSION=$(extract_version "NyarchAssistant")
+          CATGIRL_VERSION=$(extract_version "CatgirlDownloader")
+          TAG_NAME="v${ASSISTANT_VERSION}-${CATGIRL_VERSION}"
+          echo "assistant_version=$ASSISTANT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "catgirl_version=$CATGIRL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "Versions — NyarchAssistant: $ASSISTANT_VERSION, CatgirlDownloader: $CATGIRL_VERSION, Tag: $TAG_NAME"
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG_NAME already exists, skipping"
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG_NAME does not exist, will create"
+          fi
+
+      - name: Create release
+        if: steps.release_check.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.release_check.outputs.tag_name }}
+          ASSISTANT_VERSION: ${{ steps.release_check.outputs.assistant_version }}
+          CATGIRL_VERSION: ${{ steps.release_check.outputs.catgirl_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG_NAME" -m "NyarchAssistant v$ASSISTANT_VERSION / CatgirlDownloader v$CATGIRL_VERSION"
+          git push origin "$TAG_NAME"
+          gh release create "$TAG_NAME" \
+            --title "NyarchLinux Apps (NyarchAssistant v$ASSISTANT_VERSION / CatgirlDownloader v$CATGIRL_VERSION)" \
+            --notes "Auto-updated NyarchLinux packages.
+
+          | Component | Version |
+          | --- | --- |
+          | NyarchAssistant (\`default\`, \`nyarchassistant\`) | $ASSISTANT_VERSION |
+          | CatgirlDownloader (\`catgirldownloader\`) | $CATGIRL_VERSION |
+
+          ## Installation
+
+          \`\`\`nix
+          inputs.nyarch-nix.url = \"github:fumoctl/Nyarch-Nix/$TAG_NAME\";
+          \`\`\`
+
+          ## Notes
+          - 📦 Platforms: Linux (x86_64, aarch64)
+          - ✅ Hashes verified by build before release"
+          echo "✓ Created release $TAG_NAME"

@@ -1,0 +1,158 @@
+name: Update NyarchLinux Apps
+
+on:
+  schedule:
+    # Run daily at 07:00 UTC
+    - cron: '0 7 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        env:
+          DISABLE_FLAKEHUB: "true"
+        with:
+          flakehub: false
+          extra-conf: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Setup Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run update script
+        id: update
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/update-version.sh
+          # Capture output and show it for debugging
+          if ./scripts/update-version.sh 2>&1 | tee update_output.txt; then
+            echo "update_success=true" >> "$GITHUB_OUTPUT"
+            # Check if versions.json was modified
+            if git diff --quiet artifacts/versions.json; then
+              echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            else
+              extract_version() {
+                jq -r --arg name "$1" '.[$name].version // "unknown"' artifacts/versions.json
+              }
+              ASSISTANT_VERSION=$(extract_version "NyarchAssistant")
+              CATGIRL_VERSION=$(extract_version "CatgirlDownloader")
+              echo "Detected versions — NyarchAssistant: $ASSISTANT_VERSION, CatgirlDownloader: $CATGIRL_VERSION"
+              echo "new_version=a${ASSISTANT_VERSION}-c${CATGIRL_VERSION}" >> "$GITHUB_OUTPUT"
+              echo "assistant_version=$ASSISTANT_VERSION" >> "$GITHUB_OUTPUT"
+              echo "catgirl_version=$CATGIRL_VERSION" >> "$GITHUB_OUTPUT"
+              echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "update_success=false" >> "$GITHUB_OUTPUT"
+            echo "=== Update script failed ==="
+            cat update_output.txt
+            exit 1
+          fi
+
+      - name: Verify packages build
+        if: steps.update.outputs.has_changes == 'true'
+        run: |
+          echo "Running flake check..."
+          nix flake check
+          echo "Building updated packages (verifies the new hashes before opening a PR)..."
+          nix build .#default .#nyarchassistant .#catgirldownloader --no-link --print-build-logs
+
+      - name: Create Pull Request
+        if: steps.update.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update nyarch apps (assistant ${{ steps.update.outputs.assistant_version }}, catgirldownloader ${{ steps.update.outputs.catgirl_version }})"
+          title: "chore: update nyarch apps (assistant ${{ steps.update.outputs.assistant_version }}, catgirldownloader ${{ steps.update.outputs.catgirl_version }})"
+          body: |
+            ## NyarchLinux Apps Update
+            This PR updates the NyarchLinux Nix flake packages.
+
+            Detected versions:
+            - **NyarchAssistant**: `${{ steps.update.outputs.assistant_version }}`
+            - **CatgirlDownloader**: `${{ steps.update.outputs.catgirl_version }}`
+
+            ### Changes
+            - Updated versions and hashes in `artifacts/versions.json`
+
+            ### Testing
+            - ✅ Flake checks passed (`nix flake check`)
+            - ✅ Built packages successfully
+
+            ---
+            🤖 This PR was created automatically by the auto-update workflow.
+          branch: auto-update/nyarch-${{ steps.update.outputs.new_version }}
+          delete-branch: true
+          labels: |
+            automated
+            nyarch-update
+
+      - name: Enable auto-merge
+        if: steps.update.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.update.outputs.new_version }}
+        run: |
+          # Retry loop with exponential backoff to find the PR
+          MAX_ATTEMPTS=5
+          ATTEMPT=1
+          WAIT_TIME=5
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Looking for PR..."
+            PR_NUMBER=$(gh pr list --head "auto-update/nyarch-$NEW_VERSION" --json number --jq '.[0].number')
+            if [ -n "$PR_NUMBER" ]; then
+              echo "Found PR #$PR_NUMBER"
+              echo "Enabling auto-merge..."
+              if gh pr merge "$PR_NUMBER" --auto --squash; then
+                echo "✓ Auto-merge enabled for PR #$PR_NUMBER"
+                exit 0
+              else
+                echo "⚠ Failed to enable auto-merge (auto-merge may not be enabled in repository settings), but PR exists"
+                exit 0
+              fi
+            fi
+            if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+              echo "PR not found yet, waiting ${WAIT_TIME}s before retry..."
+              sleep $WAIT_TIME
+              WAIT_TIME=$((WAIT_TIME * 2)) # Exponential backoff
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+          echo "⚠ Could not find PR after $MAX_ATTEMPTS attempts"
+          echo "The PR may have been created but not yet visible via API"
+
+      - name: Report status
+        if: always()
+        env:
+          UPDATE_SUCCESS: ${{ steps.update.outputs.update_success }}
+          HAS_CHANGES: ${{ steps.update.outputs.has_changes }}
+          ASSISTANT_VER: ${{ steps.update.outputs.assistant_version }}
+          CATGIRL_VER: ${{ steps.update.outputs.catgirl_version }}
+        run: |
+          if [[ "$UPDATE_SUCCESS" == "true" ]]; then
+            if [[ "$HAS_CHANGES" == "true" ]]; then
+              echo "✅ Update successful! NyarchAssistant: $ASSISTANT_VER, CatgirlDownloader: $CATGIRL_VER"
+            else
+              echo "✅ Already at latest version"
+            fi
+          else
+            echo "❌ Update failed"
+            exit 1
+          fi
