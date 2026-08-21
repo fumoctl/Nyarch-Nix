@@ -1,8 +1,8 @@
 {
   "NyarchAssistant": {
-    "version": "1.4.5",
-    "url": "https://github.com/NyarchLinux/NyarchAssistant/archive/refs/tags/1.4.5.tar.gz",
-    "hash": "063h6rh6dj20h9f46sr686yynqdqcq7a7agh9pcfrfcx3r5q34ms"
+    "version": "1.5.0",
+    "url": "https://github.com/NyarchLinux/NyarchAssistant/archive/refs/tags/1.5.0.tar.gz",
+    "hash": "0vw2hqy8xsgwcil9gszl16bwila4w07zppf7lj9yrw1ynwnisy64"
   },
   "CatgirlDownloader": {
     "version": "0.5",
