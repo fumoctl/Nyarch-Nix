@@ -93,7 +93,7 @@ Add the flake to your `flake.nix` inputs:
 ```nix
 {
   nixpkgs.overlays = [
-    nyarch-nix.overlays.default
+    inputs.nyarch-nix.overlays.default
   ];
 
   environment.systemPackages = with pkgs; [
