@@ -1,8 +1,8 @@
 {
   "NyarchAssistant": {
-    "version": "1.6.0",
-    "url": "https://github.com/NyarchLinux/NyarchAssistant/archive/refs/tags/1.6.0.tar.gz",
-    "hash": "1nnvcmqn6x0292pjzgmd0hfb8zkvsnynfh9594bfhpij40r0dbi1"
+    "version": "1.6.1",
+    "url": "https://github.com/NyarchLinux/NyarchAssistant/archive/refs/tags/1.6.1.tar.gz",
+    "hash": "0p7ghxj4v84chbadcrgfv793b02ygbxra84fkydajs2iw2wpx59z"
   },
   "CatgirlDownloader": {
     "version": "0.6.1",
